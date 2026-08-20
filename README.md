@@ -198,7 +198,7 @@ Dogs and humans share TP53, PIK3CA, BRCA2, and many other oncogenic drivers. Can
 ## Reference
 
 - **[Hackathon Writeup](docs/hackathon-writeup.md)** — the Kaggle Gemma4Good submission writeup (architecture + Gemma roles + decisions + limitations)
-- **[The Default Treatment](docs/strategy-memo.md)** — strategy memo: five-year backcast on making this the standard of care for canine cancer in North America
+- **[Making Cancer Vaccines the Default for Dogs](https://shashankpadala.com/blogs/canine-vaccine-default-treatment)** — strategy backcast: what it would take to make this the standard of care for canine cancer in North America
 - [Blog: The Case for Personalized Canine Cancer Vaccines](docs/blog-01-cancer-vaccine-case.md)
 - [Project Rosie — The Larger Vision (Phase 2+ architecture)](docs/blog-02-ai-pipeline-architecture.md)
 - [Hackathon: Gemma4Good — Health & Sciences track](https://www.kaggle.com/competitions/gemma4good)
