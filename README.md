@@ -113,9 +113,10 @@ The mRNA **synthesis specification** is rendered from a **Jinja template**, not 
 - Re-submit UI for failed cases; pipeline errors surface immediately on failure
 - One-shot scripts (`pipeline/scripts/build_demo.py`, `pipeline/scripts/wipe_and_seed_demo.py`) to regenerate the demo from local pipeline outputs
 
-**Hackathon Writeup (M8, partial)**
-- Kaggle writeup drafted: [`docs/hackathon-writeup.md`](docs/hackathon-writeup.md) — ~1,420 words, title and subtitle sized for Kaggle's character limits
+**Hackathon Submission (M8)**
+- Kaggle writeup published: [`docs/hackathon-writeup.md`](docs/hackathon-writeup.md) — ~1,420 words, title and subtitle sized for Kaggle's character limits
 - README + key-decisions doc + frontend-architecture doc updated to match the actual implementation (templated synthesis spec, Gemma advisor pattern, vertical pipeline timeline)
+- Final Kaggle submission (writeup + video + repo + live demo + cover image) submitted
 
 ---
 
@@ -126,13 +127,6 @@ The mRNA **synthesis specification** is rendered from a **Jinja template**, not 
 - Outreach ongoing to OVC Guelph, OICR, UofT Donnelly Centre for comparative oncology perspective.
 
 ---
-
-### ⬜ TODO
-
-**Hackathon Submission (M8 — remaining)**
-- [ ] Record 3-minute Loom: upload → pipeline runs → report appears → advisor flags an issue → chat question answered
-- [ ] Cover image / architecture diagram for the Kaggle Media Gallery
-- [ ] Final Kaggle submission (writeup + video + repo + live demo + cover image)
 
 ---
 
@@ -148,7 +142,7 @@ The mRNA **synthesis specification** is rendered from a **Jinja template**, not 
 | M5 — Cloud | GCS upload, Cloud Run Job, GCP auth, Realtime callbacks | ✅ Done |
 | M6 — Canine Data | VEP + DLA alleles + end-to-end cloud run on canine VCF + enriched public demo | ✅ Done |
 | M7 — Validation | Outreach to OVC Guelph / OICR / UofT Donnelly Centre | 🔄 In Progress |
-| M8 — Submission | Writeup ✅ · Video, cover image, final submit | 🔄 In Progress |
+| M8 — Submission | Writeup, video, cover image, final Kaggle submit | ✅ Done |
 
 ---
 
@@ -204,6 +198,7 @@ Dogs and humans share TP53, PIK3CA, BRCA2, and many other oncogenic drivers. Can
 ## Reference
 
 - **[Hackathon Writeup](docs/hackathon-writeup.md)** — the Kaggle Gemma4Good submission writeup (architecture + Gemma roles + decisions + limitations)
+- **[The Default Treatment](docs/strategy-memo.md)** — strategy memo: five-year backcast on making this the standard of care for canine cancer in North America
 - [Blog: The Case for Personalized Canine Cancer Vaccines](docs/blog-01-cancer-vaccine-case.md)
 - [Project Rosie — The Larger Vision (Phase 2+ architecture)](docs/blog-02-ai-pipeline-architecture.md)
 - [Hackathon: Gemma4Good — Health & Sciences track](https://www.kaggle.com/competitions/gemma4good)
