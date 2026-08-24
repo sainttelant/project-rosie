@@ -216,5 +216,11 @@ Dogs and humans share TP53, PIK3CA, BRCA2, and many other oncogenic drivers. Can
 
 ---
 
+## License
+
+This project is licensed under [CC BY 4.0](LICENSE) — the winner license required by The Gemma 4 Good Hackathon Competition Rules (Section 1.6, Section 2.5).
+
+---
+
 Built by Shashank Padala, Kirak Labs, Toronto.
 Hackathon submission for [Gemma4Good](https://www.kaggle.com/competitions/gemma4good) — Health & Sciences track.

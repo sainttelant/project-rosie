@@ -2,6 +2,7 @@
   "name": "project-rosie",
   "version": "0.1.0",
   "private": true,
+  "license": "CC-BY-4.0",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
