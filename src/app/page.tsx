@@ -265,6 +265,15 @@ export default function HomePage() {
             Follow a real canine mammary tumor case from somatic VCF to ranked
             neoantigen candidates, AI clinical report, and a synthesis-ready mRNA construct.
           </p>
+          <div className="rounded-2xl overflow-hidden border border-border/60 shadow-xl shadow-black/10 aspect-video mb-9">
+            <iframe
+              src="https://www.youtube.com/embed/HRn4zM7KbEQ"
+              title="Project Rosie — Video Walkthrough"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              className="w-full h-full"
+            />
+          </div>
           <Link
             href="/demo"
             className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl bg-hero-gradient text-primary-foreground font-semibold hover:opacity-90 transition-opacity shadow-lg shadow-primary/25 text-sm"

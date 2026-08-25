@@ -4,7 +4,7 @@
 
 > An Australian ML engineer with 17 years of experience still needed three months and a university research lab to design one personalized cancer vaccine for his dog Rosie by hand. If that is what it takes for someone with his background, the question of accessibility for a veterinary oncologist with no ML training is not a question — it is a wall. Project Rosie exists to remove that wall.
 
-**Live:** [rosie.kiraklabs.com](https://rosie.kiraklabs.com) · **Demo:** [rosie.kiraklabs.com/demo](https://rosie.kiraklabs.com/demo)
+**Live:** [rosie.kiraklabs.com](https://rosie.kiraklabs.com) · **Demo:** [rosie.kiraklabs.com/demo](https://rosie.kiraklabs.com/demo) · **Video walkthrough:** [YouTube](https://youtu.be/HRn4zM7KbEQ)
 
 ---
 
@@ -197,6 +197,7 @@ Dogs and humans share TP53, PIK3CA, BRCA2, and many other oncogenic drivers. Can
 
 ## Reference
 
+- **[Video Walkthrough (YouTube)](https://youtu.be/HRn4zM7KbEQ)** — demo of the full pipeline, from VCF upload to synthesis-ready mRNA
 - **[Hackathon Writeup](docs/hackathon-writeup.md)** — the Kaggle Gemma4Good submission writeup (architecture + Gemma roles + decisions + limitations)
 - **[Making Cancer Vaccines the Default for Dogs](https://shashankpadala.com/blogs/canine-vaccine-default-treatment)** — strategy backcast: what it would take to make this the standard of care for canine cancer in North America
 - [Blog: The Case for Personalized Canine Cancer Vaccines](docs/blog-01-cancer-vaccine-case.md)
