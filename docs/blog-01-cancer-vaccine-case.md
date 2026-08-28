@@ -2,7 +2,7 @@
 
 *The tools exist. The science is proven. The infrastructure does not. I am building it as an open source project and anyone is welcome to join.*
 
-*Published: April 9, 2026 — padala.ai*
+*Published: April 9, 2026 — shashankpadala.com*
 
 ---
 
