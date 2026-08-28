@@ -8,7 +8,7 @@
 
 In December 2025, a dog named Rosie received an injection at a veterinary clinic in Gatton, Australia. The injection was a personalized mRNA cancer vaccine, designed by her owner using free AI tools, manufactured in under two months by university researchers who had never done anything like this before. A month later, the tennis-ball-sized tumor on her leg had shrunk by 75%.
 
-The researchers who helped make it said: *"It raises the question, if we can do this for a dog, why aren't we rolling this out to all humans with cancer?"*
+The researchers who helped make it said: *"It raises the question, if we can do this for one dog, why aren't we rolling this out to all dogs with cancer?"*
 
 That question has been living rent-free in my head ever since.
 
