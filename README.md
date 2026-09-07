@@ -210,10 +210,270 @@ Dogs and humans share TP53, PIK3CA, BRCA2, and many other oncogenic drivers. Can
 
 ## Documentation for Non-Biology Readers
 
+- [Architecture & End-to-End Runtime Flow](docs/architecture-and-flow.md) — **code-verified engineering reference**: repo map, subsystem overview, the full request→upload→pipeline→callback→report flow, Gemma roles, data model, and auth (start here) · [中文版](docs/architecture-and-flow.zh.md)
 - [From DNA to Vaccine Candidates](docs/explainers/01-from-dna-to-vaccine-candidates.md) — Every step of the pipeline explained in plain English, plus a biology glossary
 - [Key Architecture Decisions](docs/explainers/02-key-decisions.md) — Why VCF not FASTQ, why NetMHCpan, why no AlphaFold in Phase 1
 - [Frontend Architecture](docs/explainers/03-frontend-architecture.md) — Next.js structure, Supabase data model, report viewer, chat widget
 - [Cloud Deployment Architecture](docs/explainers/04-cloud-deployment.md) — GCS, Cloud Run Jobs, GCP auth, callback pattern for live status
+
+---
+
+## Docker — Build & Run
+
+The web application (Next.js frontend + API routes) is packaged as a multi-stage Docker image. The bioinformatics pipeline (`pipeline/`) is a **separate** image that runs on Cloud Run Jobs and is not included in this image.
+
+### Prerequisites
+
+- Docker (with BuildKit enabled, default since Docker 23)
+- A Supabase project (URL + publishable key + service-role key)
+- A GCP project with GCS bucket, Cloud Run Job, and Vertex AI (Gemma 4) configured
+
+### Build
+
+```bash
+docker build -t rosie-web .
+```
+
+The build is a three-stage process:
+
+| Stage | Base | Purpose |
+|---|---|---|
+| `deps` | `node:22-alpine` | `npm ci` — install production + dev dependencies |
+| `builder` | `node:22-alpine` | `next build` — compile, type-check, prerender static pages |
+| `runner` | `node:22-alpine` | Copy `.next/standalone` + static assets + `public/`, run as non-root user |
+
+> **Note:** `NEXT_PUBLIC_*` environment variables are **inlined at build time**. If your Supabase URL/key differ between build and runtime, pass them as build args:
+>
+> ```bash
+> docker build \
+>   --build-arg NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co \
+>   --build-arg NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=eyJ... \
+>   -t rosie-web .
+> ```
+>
+> In practice, the Supabase client is created server-side in API routes, so runtime `-e` injection is sufficient for most deployments.
+
+### Run
+
+```bash
+docker run -d \
+  --name rose \
+  -p 3000:3000 \
+  -e NEXT_PUBLIC_SUPABASE_URL="https://your-project.supabase.co" \
+  -e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="eyJ..." \
+  -e SUPABASE_SERVICE_ROLE_KEY="eyJ..." \
+  -e GCP_PROJECT_ID="your-gcp-project" \
+  -e GCP_REGION="us-central1" \
+  -e GCS_BUCKET="project-rosie-pipeline" \
+  -e CLOUD_RUN_JOB_NAME="rosie-pipeline" \
+  -e PIPELINE_CALLBACK_SECRET="your-shared-secret" \
+  -e GEMMA_MODEL="gemma-4-26b-a4b-it-maas" \
+  -e GOOGLE_APPLICATION_CREDENTIALS_JSON='{"type":"service_account",...}' \
+  -e NEXT_PUBLIC_APP_URL="http://localhost:3000" \
+  -v /home/wilsxue.adm/cure/project-rosie:/workspace \
+  rosie-web
+```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | ✅ | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | ✅ | Supabase publishable (anon) key |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Supabase service-role key (admin writes, bypasses RLS) |
+| `GCP_PROJECT_ID` | ✅ | GCP project ID for GCS + Cloud Run + Vertex AI |
+| `GCP_REGION` | — | GCP region (default `us-central1`) |
+| `GCS_BUCKET` | ✅ | GCS bucket for VCF uploads |
+| `CLOUD_RUN_JOB_NAME` | ✅ | Cloud Run Job name to trigger the pipeline |
+| `PIPELINE_CALLBACK_SECRET` | ✅ | Shared secret for `/api/cases/[id]/progress` callback auth |
+| `GEMMA_MODEL` | — | Vertex AI model ID (default `gemma-4-26b-a4b-it-maas`) |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | ✅* | Service-account JSON key for GCP API calls (*or use WIF via `VERCEL_OIDC_TOKEN`) |
+| `NEXT_PUBLIC_APP_URL` | — | Public base URL, passed to the pipeline Job as callback origin |
+
+### Verify
+
+```bash
+# Health check
+curl http://localhost:3000/api/health
+# → {"status":"ok","timestamp":"2026-09-07T..."}
+
+# Landing page
+curl -I http://localhost:3000
+# → HTTP/1.1 200 OK
+```
+
+### Docker Compose (optional)
+
+For local development with all services, you can extend the existing `pipeline/docker-compose.yml` pattern:
+
+```yaml
+# docker-compose.yml (project root)
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - GCS_BUCKET=${GCS_BUCKET}
+      - CLOUD_RUN_JOB_NAME=${CLOUD_RUN_JOB_NAME}
+      - PIPELINE_CALLBACK_SECRET=${PIPELINE_CALLBACK_SECRET}
+      - GOOGLE_APPLICATION_CREDENTIALS_JSON=${GOOGLE_APPLICATION_CREDENTIALS_JSON}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+```
+
+```bash
+# Load .env, then:
+docker compose up -d --build
+```
+
+### Pipeline Image (separate)
+
+The bioinformatics pipeline is built and deployed independently:
+
+```bash
+cd pipeline
+docker build -t rosie-pipeline .
+# Push to Artifact Registry, then deploy as a Cloud Run Job
+```
+
+See [`pipeline/Dockerfile`](pipeline/Dockerfile) and [`docs/explainers/04-cloud-deployment.md`](docs/explainers/04-cloud-deployment.md) for details.
+
+---
+
+## Docker — 构建与运行（中文版）
+
+Web 应用（Next.js 前端 + API 路由）打包为多阶段 Docker 镜像。生信流水线（`pipeline/`）是**独立的**镜像，运行在 Cloud Run Jobs 上，不包含在此镜像中。
+
+### 前置条件
+
+- Docker（需启用 BuildKit，Docker 23+ 默认开启）
+- 一个 Supabase 项目（URL + publishable key + service-role key）
+- 一个 GCP 项目（已配置 GCS 存储桶、Cloud Run Job、Vertex AI / Gemma 4）
+
+### 构建镜像
+
+```bash
+docker build -t rosie-web .
+```
+
+构建过程分为三个阶段：
+
+| 阶段 | 基础镜像 | 用途 |
+|---|---|---|
+| `deps` | `node:22-alpine` | `npm ci` — 安装生产 + 开发依赖 |
+| `builder` | `node:22-alpine` | `next build` — 编译、类型检查、预渲染静态页面 |
+| `runner` | `node:22-alpine` | 复制 `.next/standalone` + 静态资源 + `public/`，以非 root 用户运行 |
+
+> **注意：** `NEXT_PUBLIC_*` 环境变量在**构建时**被内联到客户端 bundle 中。如果构建时和运行时的 Supabase 配置不同，请通过 `--build-arg` 传入：
+>
+> ```bash
+> docker build \
+>   --build-arg NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co \
+>   --build-arg NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=eyJ... \
+>   -t rosie-web .
+> ```
+>
+> 实际上，Supabase 客户端是在服务端 API 路由中创建的，所以大多数部署场景下运行时 `-e` 注入即可。
+
+### 运行容器
+
+```bash
+docker run -d \
+  --name rosie \
+  -p 3000:3000 \
+  -e NEXT_PUBLIC_SUPABASE_URL="https://your-project.supabase.co" \
+  -e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="eyJ..." \
+  -e SUPABASE_SERVICE_ROLE_KEY="eyJ..." \
+  -e GCP_PROJECT_ID="your-gcp-project" \
+  -e GCP_REGION="us-central1" \
+  -e GCS_BUCKET="project-rosie-pipeline" \
+  -e CLOUD_RUN_JOB_NAME="rosie-pipeline" \
+  -e PIPELINE_CALLBACK_SECRET="your-shared-secret" \
+  -e GEMMA_MODEL="gemma-4-26b-a4b-it-maas" \
+  -e GOOGLE_APPLICATION_CREDENTIALS_JSON='{"type":"service_account",...}' \
+  -e NEXT_PUBLIC_APP_URL="http://localhost:3000" \
+  rosie-web
+```
+
+### 环境变量说明
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | ✅ | Supabase 项目 URL |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | ✅ | Supabase 公开密钥（anon key） |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Supabase 服务角色密钥（管理员写入，绕过 RLS） |
+| `GCP_PROJECT_ID` | ✅ | GCP 项目 ID（用于 GCS + Cloud Run + Vertex AI） |
+| `GCP_REGION` | — | GCP 区域（默认 `us-central1`） |
+| `GCS_BUCKET` | ✅ | GCS 存储桶名称（VCF 上传） |
+| `CLOUD_RUN_JOB_NAME` | ✅ | 要触发的 Cloud Run Job 名称 |
+| `PIPELINE_CALLBACK_SECRET` | ✅ | `/api/cases/[id]/progress` 回调的共享密钥 |
+| `GEMMA_MODEL` | — | Vertex AI 模型 ID（默认 `gemma-4-26b-a4b-it-maas`） |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | ✅* | 服务账号 JSON 密钥（*或使用 WIF 的 `VERCEL_OIDC_TOKEN`） |
+| `NEXT_PUBLIC_APP_URL` | — | 公网基础 URL，作为回调地址传给流水线 Job |
+
+### 验证服务
+
+```bash
+# 健康检查
+curl http://localhost:3000/api/health
+# → {"status":"ok","timestamp":"2026-09-07T..."}
+
+# 首页
+curl -I http://localhost:3000
+# → HTTP/1.1 200 OK
+```
+
+### Docker Compose（可选）
+
+本地开发时可以用 Compose 一键拉起：
+
+```yaml
+# docker-compose.yml（项目根目录）
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - GCS_BUCKET=${GCS_BUCKET}
+      - CLOUD_RUN_JOB_NAME=${CLOUD_RUN_JOB_NAME}
+      - PIPELINE_CALLBACK_SECRET=${PIPELINE_CALLBACK_SECRET}
+      - GOOGLE_APPLICATION_CREDENTIALS_JSON=${GOOGLE_APPLICATION_CREDENTIALS_JSON}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+```
+
+```bash
+# 加载 .env 后：
+docker compose up -d --build
+```
+
+### 流水线镜像（独立构建）
+
+生信流水线单独构建和部署：
+
+```bash
+cd pipeline
+docker build -t rosie-pipeline .
+# 推送到 Artifact Registry，然后部署为 Cloud Run Job
+```
+
+详见 [`pipeline/Dockerfile`](pipeline/Dockerfile) 和 [`docs/explainers/04-cloud-deployment.md`](docs/explainers/04-cloud-deployment.md)。
 
 ---
 

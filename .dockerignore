@@ -1,0 +1,49 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build output
+.next
+out
+dist
+
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Pipeline (separate service, not needed in web image)
+pipeline/
+
+# Misc
+*.md
+!README.md
+
+# IDE
+.vscode
+.idea
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env files (secrets should be injected at runtime)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage
+.nyc_output
+
+# Supabase local
+supabase/.temp
