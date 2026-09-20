@@ -1,21 +1,18 @@
 FROM griffithlab/pvactools:latest
 
-# Install tcsh (required by NetMHCpan wrapper script)
-RUN apt-get update && apt-get install -y --no-install-recommends tcsh && rm -rf /var/lib/apt/lists/*
+# MHCflurry is a Python package (installed via requirements.txt below).
+# MixMHCpred 3.0 is a bash+Python tool installed from its GitHub repo (v3.0 tag).
+# Both are installed at build time — no external binary download is required.
 
-# Install NetMHCpan 4.2
-COPY netMHCpan-4.2cstatic.Linux.tar.gz /tmp/
-RUN tar -xzf /tmp/netMHCpan-4.2cstatic.Linux.tar.gz -C /opt/ \
-    && rm /tmp/netMHCpan-4.2cstatic.Linux.tar.gz \
-    # Patch the installation path in the wrapper script
-    && sed -i 's|setenv\s*NMHOME.*|setenv NMHOME /opt/netMHCpan-4.2|' /opt/netMHCpan-4.2/netMHCpan \
-    # Make binary executable and symlink as netMHCpan in PATH
-    && chmod +x /opt/netMHCpan-4.2/Linux_x86_64/bin/netMHCpan-4.2 \
-    && chmod +x /opt/netMHCpan-4.2/netMHCpan \
-    && ln -s /opt/netMHCpan-4.2/netMHCpan /usr/local/bin/netMHCpan
+# Install MixMHCpred 3.0 (pan-allele MHC-I predictor, supports non-human alleles)
+RUN apt-get update && apt-get install -y --no-install-recommends git mafft \
+    && rm -rf /var/lib/apt/lists/* \
+    && git clone --depth 1 --branch v3.0 https://github.com/GfellerLab/MixMHCpred.git /opt/MixMHCpred \
+    && chmod +x /opt/MixMHCpred/MixMHCpred \
+    && ln -s /opt/MixMHCpred/MixMHCpred /usr/local/bin/MixMHCpred
 
-ENV NMHOME=/opt/netMHCpan-4.2
 ENV TMPDIR=/tmp
+ENV PATH="$PATH:/opt/MixMHCpred"
 
 WORKDIR /app
 COPY requirements.txt .

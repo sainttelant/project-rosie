@@ -31,7 +31,7 @@ ALLELES                  = os.environ["ALLELES"]              # comma-separated
 SPECIES                  = os.environ.get("SPECIES", "homo_sapiens")
 CALLBACK_URL             = os.environ["CALLBACK_URL"]         # Vercel deployment URL
 PIPELINE_CALLBACK_SECRET = os.environ["PIPELINE_CALLBACK_SECRET"]
-PREDICTORS               = os.environ.get("PREDICTORS", "NetMHCpan")
+PREDICTORS               = os.environ.get("PREDICTORS", "MHCflurry MixMHCpred")
 SKIP_PREDICTION          = os.environ.get("SKIP_PREDICTION", "").lower() == "true"
 GCS_TSV_PATH             = os.environ.get("GCS_TSV_PATH", "")  # only used when SKIP_PREDICTION=true
 

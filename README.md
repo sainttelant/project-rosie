@@ -29,7 +29,7 @@ The entire design process — previously requiring months of expert manual work 
 | Auth + Database | Supabase (PostgreSQL + RLS + Realtime) | Case metadata, scores, user auth, real-time pipeline status updates |
 | File Storage | Google Cloud Storage | VCF uploads, reports, mRNA sequences. 30-day lifecycle on pipeline work files |
 | Pipeline | Python on Cloud Run Jobs | Downloads VCF from GCS, runs all 5 pipeline stages, POSTs progress callbacks after each stage |
-| Neoantigen Prediction | pVACtools + NetMHCpan | Peptide candidates, MHC binding affinity scoring across all DLA alleles |
+| Neoantigen Prediction | pVACtools + MHCflurry | Peptide candidates, MHC binding affinity scoring across all DLA alleles |
 | mRNA Design | Python + Biopython + canine codon table | Codon-optimized mRNA with 5'UTR, 3'UTR, poly-A(60) tail |
 | Scoring | Python threshold pipeline | IC50 < 500 nM filter + weighted ranking. Transparent, auditable, ~50 lines |
 | Gemma 4 | Gemma 4 27B IT via Vertex AI | Clinical report generation, multimodal chart interpretation, conversational assistant |
@@ -74,7 +74,7 @@ The mRNA **synthesis specification** is rendered from a **Jinja template**, not 
 ### ✅ Completed
 
 **Pipeline Core (M1)**
-- pVACtools + NetMHCpan running via IEDB API on DLA-8850101 + DLA-8850801 alleles
+- pVACtools + MHCflurry running via IEDB API on DLA-8850101 + DLA-8850801 alleles
 - Scoring pipeline: IC50 < 500 nM filter, VAF-weighted ranking, top 20 candidates as JSON
 - Validated on HCC1395 benchmark: 191,645 epitopes → 1,648 candidates → top 20 ranked
 
@@ -177,7 +177,7 @@ The 16× compute cost increase and 100× storage increase are the real reasons t
 
 ### Other Phase 2 items
 
-- **AlphaFold-Multimer / ESMFold** for peptide-MHC structure prediction. Adds ~5–10% ranking precision over sequence-only NetMHCpan, at the cost of GPU hours per case. Worthwhile only after FASTQ ingestion is shipped.
+- **AlphaFold-Multimer / ESMFold** for peptide-MHC structure prediction. Adds ~5–10% ranking precision over sequence-only MHCflurry, at the cost of GPU hours per case. Worthwhile only after FASTQ ingestion is shipped.
 - **PyClone-VI** for proper subclonal clonality estimation (currently using VAF as a proxy).
 - **Nextflow** orchestration replacing the current Python entry script — production reproducibility story for regulatory filings.
 - **LinearDesign** for mRNA secondary-structure-aware codon optimization (currently using highest-frequency codon per amino acid).
@@ -187,7 +187,7 @@ The 16× compute cost increase and 100× storage increase are the real reasons t
 
 ## The Narrative
 
-Project Rosie is an **AI Clinical Assistant for Oncologists — starting with veterinary medicine.** The deterministic bioinformatics pipeline (VEP, pVACtools, NetMHCpan, Biopython) handles the biology: reproducibly, auditably, with published thresholds. Gemma 4 is the intelligence layer that wraps around it — advising before the run, interpreting after it, responding to clinical judgment interactively, and answering questions on demand.
+Project Rosie is an **AI Clinical Assistant for Oncologists — starting with veterinary medicine.** The deterministic bioinformatics pipeline (VEP, pVACtools, MHCflurry, Biopython) handles the biology: reproducibly, auditably, with published thresholds. Gemma 4 is the intelligence layer that wraps around it — advising before the run, interpreting after it, responding to clinical judgment interactively, and answering questions on demand.
 
 > "An AI engineer from Australia spent three months in a university research lab to design one vaccine for one dog. Project Rosie does it in under an hour, for any vet with a sequencing file — with an open-weights model that clinics can run locally and keep patient sequencing data on-premise."
 
@@ -198,6 +198,24 @@ Dogs and humans share TP53, PIK3CA, BRCA2, and many other oncogenic drivers. Can
 ## Reference
 
 - **[Video Walkthrough (YouTube)](https://youtu.be/HRn4zM7KbEQ)** — demo of the full pipeline, from VCF upload to synthesis-ready mRNA
+
+---
+
+## Local Model Setup
+
+To download the Gemma 4 model locally:
+
+```bash
+# Create and activate the conda environment
+conda create -n rosie python=3.11 -y
+conda activate rosie
+
+# Install dependencies
+pip install kagglehub
+
+# Download the model
+python models/down_load_gemm4.py
+```
 - **[Hackathon Writeup](docs/hackathon-writeup.md)** — the Kaggle Gemma4Good submission writeup (architecture + Gemma roles + decisions + limitations)
 - **[Making Cancer Vaccines the Default for Dogs](https://shashankpadala.com/blogs/canine-vaccine-default-treatment)** — strategy backcast: what it would take to make this the standard of care for canine cancer in North America
 - [Blog: The Case for Personalized Canine Cancer Vaccines](docs/blog-01-cancer-vaccine-case.md)
@@ -212,7 +230,7 @@ Dogs and humans share TP53, PIK3CA, BRCA2, and many other oncogenic drivers. Can
 
 - [Architecture & End-to-End Runtime Flow](docs/architecture-and-flow.md) — **code-verified engineering reference**: repo map, subsystem overview, the full request→upload→pipeline→callback→report flow, Gemma roles, data model, and auth (start here) · [中文版](docs/architecture-and-flow.zh.md)
 - [From DNA to Vaccine Candidates](docs/explainers/01-from-dna-to-vaccine-candidates.md) — Every step of the pipeline explained in plain English, plus a biology glossary
-- [Key Architecture Decisions](docs/explainers/02-key-decisions.md) — Why VCF not FASTQ, why NetMHCpan, why no AlphaFold in Phase 1
+- [Key Architecture Decisions](docs/explainers/02-key-decisions.md) — Why VCF not FASTQ, why MHCflurry, why no AlphaFold in Phase 1
 - [Frontend Architecture](docs/explainers/03-frontend-architecture.md) — Next.js structure, Supabase data model, report viewer, chat widget
 - [Cloud Deployment Architecture](docs/explainers/04-cloud-deployment.md) — GCS, Cloud Run Jobs, GCP auth, callback pattern for live status
 
@@ -485,3 +503,184 @@ This project is licensed under [CC BY 4.0](LICENSE) — the winner license requi
 
 Built by Shashank Padala, Kirak Labs, Toronto.
 Hackathon submission for [Gemma4Good](https://www.kaggle.com/competitions/gemma4good) — Health & Sciences track.
+
+---
+
+## 下载离线 Gemma 4 模型
+
+```bash
+# 1. 创建 conda 环境
+conda create -n rosie python=3.11 -y
+conda activate rosie
+
+# 2. 安装依赖
+pip install kagglehub
+
+# 3. 下载模型（约 24GB，需要 Kaggle 账号授权）
+python models/down_load_gemm4.py
+```
+
+> 模型路径：`google/gemma-4/transformers/gemma-4-12b`，下载完成后脚本会打印本地缓存路径。
+
+---
+
+## 构建 & 运行 Pipeline Docker 容器
+
+### 架构概览
+
+Pipeline 容器基于 `griffithlab/pvactools:latest`（已内置 pVACtools + VEP），在其上安装两个 MHC-I 结合亲和力预测器：
+
+| 预测器 | 安装方式 | 特点 |
+|---|---|---|
+| **MHCflurry** | `pip install mhcflurry` | Python 原生包，主要基于人类 HLA 训练 |
+| **MixMHCpred 3.0** | `git clone` (v3.0 tag) + `mafft` | pan-allele 预测器，支持人类及**其他物种**（含犬类 DLA）等位基因 |
+
+两者均在构建时安装，无需下载任何外部二进制包，镜像可完全离线构建。容器有两种运行模式：
+
+| 入口 | 用途 | 配置方式 |
+|---|---|---|
+| `run_cloud.py`（默认 ENTRYPOINT） | Cloud Run Job 模式 | 全部通过环境变量注入 |
+| `run_pipeline.py` | 本地 CLI 模式 | 命令行参数 |
+
+### 构建镜像
+
+```bash
+cd pipeline
+docker build -t rosie-pipeline .
+```
+
+构建过程：
+1. 拉取 `griffithlab/pvactools:latest` 基础镜像
+2. 安装 `git` + `mafft`，`git clone` MixMHCpred 3.0（v3.0 tag）到 `/opt/MixMHCpred`，创建 `/usr/local/bin/MixMHCpred` 符号链接
+3. `pip install -r requirements.txt`（pvactools、**mhcflurry**、**logomaker**、matplotlib、biopython、google-cloud-storage、google-genai 等）
+4. 复制 `modules/`、`run_pipeline.py`、`run_cloud.py` 到 `/app`
+
+> **注意：**
+> - MHCflurry 是 Python 原生包，通过 PyPI 安装。pVACseq 调用 MHCflurry 时通过 IEDB REST API 进行预测。
+> - MixMHCpred 3.0 是 bash + Python 工具，从 GitHub 仓库（v3.0 tag）克隆安装，依赖 `mafft`（序列比对）和 `logomaker`（motif 可视化）。其 pan-allele 神经网络模型对非人类等位基因（如犬类 DLA）的支持优于 MHCflurry。
+> - 两者可同时使用：`--predictors MHCflurry MixMHCpred`，pVACseq 会并行调用并合并结果。
+
+### 运行模式一：本地 CLI（run_pipeline.py）
+
+适合本地调试，直接传入 VCF 文件路径：
+
+```bash
+docker run --rm \
+  -v $(pwd)/output:/app/output \
+  -e GCP_PROJECT_ID="your-gcp-project" \
+  -e GCP_REGION="global" \
+  -e GEMMA_MODEL="gemma-4-26b-a4b-it-maas" \
+  -e GOOGLE_APPLICATION_CREDENTIALS_JSON='{"type":"service_account",...}' \
+  rosie-pipeline \
+  python run_pipeline.py \
+    --vcf /app/output/tumor_annotated.vcf \
+    --sample-name canine_mammary_001 \
+    --alleles DLA-8850101,DLA-8850801 \
+    --predictors MHCflurry MixMHCpred \
+    --species canis_lupus_familiaris \
+    --output-dir /app/output
+```
+
+> 注意：
+> - `run_pipeline.py` 需要 VEP 已标注的 VCF（含 `--tsl --hgvs --transcript_version --pick` 字段）。如果只有原始 VCF，需先通过 VEP 容器标注（见下方 VEP 标注步骤）。
+> - `--predictors` 可指定一个或多个预测器（空格分隔）。犬类 DLA 等位基因推荐同时使用 `MHCflurry MixMHCpred`，MixMHCpred 3.0 的 pan-allele 模型对非人类等位基因支持更好。
+
+### 运行模式二：Cloud Run Job 模式（run_cloud.py）
+
+这是生产环境的入口，所有配置通过环境变量注入：
+
+```bash
+docker run --rm \
+  -e CASE_ID="test-case-001" \
+  -e GCS_VCF_PATH="gs://your-bucket/vcf/test/tumor.vcf" \
+  -e GCS_BUCKET="your-bucket" \
+  -e SAMPLE_NAME="canine_mammary_001" \
+  -e ALLELES="DLA-8850101,DLA-8850801" \
+  -e SPECIES="canis_lupus_familiaris" \
+  -e PREDICTORS="MHCflurry MixMHCpred" \
+  -e CALLBACK_URL="https://your-app.vercel.app" \
+  -e PIPELINE_CALLBACK_SECRET="your-shared-secret" \
+  -e GCP_PROJECT_ID="your-gcp-project" \
+  -e GCP_REGION="global" \
+  -e GEMMA_MODEL="gemma-4-26b-a4b-it-maas" \
+  -e GOOGLE_APPLICATION_CREDENTIALS_JSON='{"type":"service_account",...}' \
+  rosie-pipeline
+```
+
+**必需环境变量：**
+
+| 变量 | 说明 |
+|---|---|
+| `CASE_ID` | 案例 ID（用于回调 URL） |
+| `GCS_VCF_PATH` | GCS 上的 VCF 路径（`gs://bucket/path/file.vcf`） |
+| `GCS_BUCKET` | GCS bucket 名称 |
+| `SAMPLE_NAME` | 样本名（须与 VCF 列头一致） |
+| `ALLELES` | 逗号分隔的 DLA/HLA 等位基因 |
+| `CALLBACK_URL` | 回调地址（Next.js API 的 base URL） |
+| `PIPELINE_CALLBACK_SECRET` | 回调认证密钥 |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | GCP 服务账号 JSON（或配置 WIF） |
+
+**可选环境变量：**
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `SPECIES` | `homo_sapiens` | 物种（犬用 `canis_lupus_familiaris`） |
+| `PREDICTORS` | `MHCflurry` | 预测算法（空格分隔，可多个，如 `MHCflurry MixMHCpred`） |
+| `SKIP_PREDICTION` | `false` | 设为 `true` 跳过 pVACseq，从 `GCS_TSV_PATH` 加载预计算 TSV |
+| `GCS_TSV_PATH` | — | 预计算 TSV 的 GCS 路径（配合 `SKIP_PREDICTION`） |
+| `GEMMA_MODEL` | `gemma-4-26b-a4b-it-maas` | Vertex AI 模型 ID |
+
+### VEP 标注（原始 VCF → 标注 VCF）
+
+如果输入是未标注的原始 VCF，需先用 VEP 容器进行标注：
+
+```bash
+# 下载犬类 VEP 缓存（ROS_Cfam_1.0 / CanFam4，~1.5GB）
+docker run --rm -v $(pwd)/vep_cache:/root/.vep \
+  ensemblorg/ensembl-vep \
+  vep --cache --species canis_lupus_familiaris --assembly CanFam4 --cache_version 115
+
+# 运行 VEP 标注
+docker run --rm \
+  -v $(pwd)/vep_cache:/root/.vep \
+  -v $(pwd)/input:/data/input \
+  -v $(pwd)/output:/data/output \
+  -v $(pwd)/vep_plugins:/vep_plugins \
+  ensemblorg/ensembl-vep \
+  vep \
+    --input_file /data/input/tumor.vcf \
+    --output_file /data/output/tumor_annotated.vcf \
+    --format vcf --vcf \
+    --species canis_lupus_familiaris \
+    --cache --cache_version 115 --assembly CanFam4 \
+    --plugin Wildtype=/vep_plugins/Wildtype.pm \
+    --plugin Frameshift=/vep_plugins/Frameshift.pm \
+    --tsl --hgvs --transcript_version \
+    --pick --symbol --force_overwrite
+```
+
+> **注意：** `Wildtype.pm` 和 `Frameshift.pm` 是 pVACtools 专用 VEP 插件，位于 `pipeline/vep_plugins/`。标准 `ensemblorg/ensembl-vep` 镜像不包含这些插件，必须挂载。
+
+### 推送到 Artifact Registry & 部署 Cloud Run Job
+
+```bash
+# 登录 Artifact Registry
+gcloud auth configure-docker us-central1-docker.pkg.dev
+
+# 打标签 & 推送
+docker tag rosie-pipeline us-central1-docker.pkg.dev/YOUR_PROJECT/rosie-pipeline/pipeline:latest
+docker push us-central1-docker.pkg.dev/YOUR_PROJECT/rosie-pipeline/pipeline:latest
+
+# 创建/更新 Cloud Run Job
+gcloud run jobs update rosie-pipeline \
+  --image us-central1-docker.pkg.dev/YOUR_PROJECT/rosie-pipeline/pipeline:latest \
+  --region us-central1 \
+  --memory 8Gi \
+  --cpu 4 \
+  --timeout 10800s \
+  --max-retries 0 \
+  --service-account rosie-pipeline-sa@YOUR_PROJECT.iam.gserviceaccount.com
+```
+
+详见 [`pipeline/Dockerfile`](pipeline/Dockerfile)、[`docs/explainers/04-cloud-deployment.md`](docs/explainers/04-cloud-deployment.md) 和 [`docs/explainers/05-canine-data-run.md`](docs/explainers/05-canine-data-run.md)。
+ 

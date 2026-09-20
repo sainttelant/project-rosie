@@ -10,12 +10,12 @@ Usage (Day 1, sample data with MHCflurry):
     --predictors MHCflurry \\
     --output-dir output/
 
-Usage (Day 2, canine data with NetMHCpan):
+Usage (Day 2, canine data with MHCflurry):
   python run_pipeline.py \\
     --vcf data/canine/tumor_annotated.vcf \\
     --sample-name canine_mammary_001 \\
     --alleles DLA-8803401,DLA-8850101 \\
-    --predictors NetMHCpan \\
+    --predictors MHCflurry \\
     --species canis_lupus_familiaris \\
     --output-dir output/
 """

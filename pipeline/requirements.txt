@@ -1,4 +1,6 @@
 pvactools
+mhcflurry
+logomaker
 matplotlib
 biopython
 requests

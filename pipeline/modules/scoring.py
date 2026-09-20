@@ -33,6 +33,9 @@ def _immunogenicity_score(row: pd.Series) -> float:
     if "NetMHCpan MT Percentile" in row and pd.notna(row["NetMHCpan MT Percentile"]):
         pct = float(row["NetMHCpan MT Percentile"])
         return max(0.0, 1.0 - pct / 100.0)
+    if "MixMHCpred bestScore score" in row and pd.notna(row["MixMHCpred bestScore score"]):
+        # MixMHCpred score is 0-1, higher = better binding
+        return min(1.0, max(0.0, float(row["MixMHCpred bestScore score"])))
     return 0.0
 
 
