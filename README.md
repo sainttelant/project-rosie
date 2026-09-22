@@ -683,4 +683,143 @@ gcloud run jobs update rosie-pipeline \
 ```
 
 详见 [`pipeline/Dockerfile`](pipeline/Dockerfile)、[`docs/explainers/04-cloud-deployment.md`](docs/explainers/04-cloud-deployment.md) 和 [`docs/explainers/05-canine-data-run.md`](docs/explainers/05-canine-data-run.md)。
+
+---
+
+## AlphaFold2 结构验证（Phase 2，本地 GPU）
+
+对 top 候选表位做结构验证：AlphaFold2 预测野生型蛋白结构 → 提取突变位点的 **pLDDT 置信度** 和 **表面暴露性（SASA）** → 硬过滤（pLDDT < 70 或 SASA < 0.20 的候选剔除）。
+
+> 完整方案分析见 [`README_ALPHAFOLD.md`](README_ALPHAFOLD.md)。
+
+### 环境组成
+
+| 组件 | 位置 | 说明 |
+|---|---|---|
+| AF2 镜像 | `alphafold:local`（23.7 GB） | 由 `~/alphafold/docker/Dockerfile` 构建，CUDA 12.2 |
+| 遗传数据库 | `/data_fast/aplha_data` | `reduced_dbs` 预设（params / small_bfd / mgnify / uniref90 / pdb70 / pdb_mmcif / pdb_seqres） |
+| 结构验证模块 | `pipeline/modules/structure.py` | 宿主机 Python 调用 `docker run --gpus` 跑 AF2，读回 PDB + pLDDT |
+| 蛋白序列来源 | pVACseq 自动产出的 `protein_fasta` | 无需外部下载，本地闭环 |
+
+### 环境准备（一次性）
+
+```bash
+# 1. 克隆 AF2 仓库
+git clone --depth 1 https://github.com/deepmind/alphafold.git ~/alphafold
+
+# 2. 下载遗传数据库（reduced_dbs，~100 GB 下载 / ~600 GB 解压）
+#    需要 aria2c：sudo apt install -y aria2
+#    建议配置 ~/.config/aria2/aria2.conf（timeout=600, max-tries=0, continue=true）
+bash ~/alphafold/scripts/download_all_data.sh /data_fast/aplha_data reduced_dbs
+
+# 3. 构建镜像
+cd ~/alphafold && docker build -f docker/Dockerfile -t alphafold:local .
+
+# 4. 验证 GPU 透传
+docker run --rm --gpus '"device=0"' nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu20.04 nvidia-smi
+```
+
+### 冒烟测试（单蛋白结构预测）
+
+验证 GPU 透传 + 数据库挂载 + 输出格式，用一个 ~150 aa 的小蛋白：
+
+```bash
+# 准备测试 FASTA
+cat > /tmp/smoke_test.fasta << 'EOF'
+>smoke_test
+MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQ
+EOF
+
+# 跑一次预测（约 5–15 分钟）
+docker run --rm \
+  --gpus '"device=0"' \
+  -v /data_fast/aplha_data:/data_fast/aplha_data:ro \
+  -v /tmp:/tmp \
+  alphafold:local \
+    --fasta_paths=/tmp/smoke_test.fasta \
+    --output_dir=/tmp/af2_smoke \
+    --db_preset=reduced_dbs \
+    --model_preset=monomer \
+    --models_to_relax=best \
+    --data_dir=/data_fast/aplha_data \
+    --small_bfd_database_path=/data_fast/aplha_data/small_bfd/bfd-first_non_consensus_sequences.fasta \
+    --mgnify_database_path=/data_fast/aplha_data/mgnify/mgy_clusters_2022_05.fa \
+    --uniref90_database_path=/data_fast/aplha_data/uniref90/uniref90.fasta \
+    --pdb70_database_path=/data_fast/aplha_data/pdb70/pdb70 \
+    --template_mmcif_dir=/data_fast/aplha_data/pdb_mmcif/mmcif_files \
+    --obsolete_pdbs_path=/data_fast/aplha_data/pdb_mmcif/obsolete.dat
+
+# 验证输出
+ls /tmp/af2_smoke/smoke_test/
+# 预期: ranked_0.pdb  ranking_debug.json  relax_metrics.json  timings.json
+python -c "import json; d=json.load(open('/tmp/af2_smoke/smoke_test/ranking_debug.json')); print('pLDDT 范围:', min(min(v.values()) for v in d.values()), '-', max(max(v.values()) for v in d.values()))"
+```
+
+### 模块级测试（structure.py 独立运行）
+
+对已有 candidates JSON 做结构验证（不跑完整流水线）：
+
+```bash
+cd pipeline
+python modules/structure.py \
+  --candidates output/<sample>_candidates.json \
+  --output-dir output/structure \
+  --gpu 0 \
+  --data-dir /data_fast/aplha_data
+  # --protein-fasta <path>   # 可选，默认自动定位 pVACseq 产出的 protein_fasta
+  # --no-filter              # 只标注 pLDDT/SASA 字段，不过滤候选
+```
+
+输出：`output/structure/<sample>_candidates.json`（每个候选新增 `plddt`、`sasa_fraction`、`surface_exposed` 字段）+ 各蛋白的 `ranked_0.pdb`。
+
+### 全链路测试（run_pipeline.py --structure）
+
+一条命令跑完整流水线（pVACseq → 打分 → **AF2 结构验证** → 图表 → Gemma 报告 → mRNA 设计）：
+
+```bash
+cd pipeline
+python run_pipeline.py \
+  --vcf data/canine/tumor_annotated.vcf \
+  --sample-name canine_mammary_001 \
+  --alleles DLA-8803401,DLA-8850101 \
+  --predictors MHCflurry \
+  --species canis_lupus_familiaris \
+  --structure \
+  --structure-gpu 0 \
+  --structure-data-dir /data_fast/aplha_data \
+  --output-dir output/
+```
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--structure` | 关闭 | 开启 AF2 结构验证（不加则行为与 Phase 1 完全一致） |
+| `--structure-gpu` | `0` | AF2 使用的 GPU 设备索引 |
+| `--structure-data-dir` | `/data_fast/aplha_data` | AF2 遗传数据库目录 |
+| `--protein-fasta` | 自动定位 | 野生型蛋白 FASTA（默认用 pVACseq 产出的 `protein_fasta`） |
+
+**验证清单：**
+
+```bash
+# 1. 候选 JSON 含结构字段
+python -c "
+import json
+d = json.load(open('output/canine_mammary_001_candidates.json'))
+for c in d['top_candidates'][:5]:
+    print(c['rank'], c['gene'], c['hgvsp'], 'pLDDT=', c.get('plddt'), 'SASA=', c.get('sasa_fraction'), 'surface=', c.get('surface_exposed'))
+print('结构验证配置:', d.get('structure_validation'))
+"
+
+# 2. PDB 文件存在
+ls output/structure/*/ranked_0.pdb
+
+# 3. 下游产物正常（图表 / 报告 / mRNA）
+ls output/canine_mammary_001_clinical_report.md output/canine_mammary_001_vaccine_mrna.fasta
+```
+
+### 注意事项
+
+- **GPU 显存**：AF2 默认参数需 ~16–20 GB 显存。若 ollama 等进程占用目标 GPU，先 `ollama stop` 或换 `--structure-gpu` 到空闲卡
+- **运行时间**：单蛋白（~400 aa）约 10–20 分钟；top 20 候选去重后通常 10–20 个蛋白，串行约 2–6 小时
+- **过滤阈值**：`PLDDT_MIN = 70`、`SASA_MIN = 0.20`，定义在 `pipeline/modules/structure.py` 顶部
+- **数据库完整性检查**：`structure.py` 运行前会校验 7 个数据库文件是否齐全，缺失时报错提示
  

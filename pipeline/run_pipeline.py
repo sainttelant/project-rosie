@@ -30,6 +30,7 @@ from modules.scoring import score_candidates
 from modules.visualizations import generate_all
 from modules.gemma import generate_clinical_report
 from modules.mrna_design import design_mrna
+from modules.structure import annotate_candidates
 
 
 def parse_args():
@@ -44,6 +45,15 @@ def parse_args():
     p.add_argument("--skip-prediction", action="store_true",
                    help="Skip pvacseq run and use existing TSV (provide --tsv)")
     p.add_argument("--tsv", help="Existing pVACseq all_epitopes.tsv (use with --skip-prediction)")
+    # Phase 2: AlphaFold2 structural validation (local Docker + GPU, off by default)
+    p.add_argument("--structure", action="store_true",
+                   help="Run AlphaFold2 structural validation (pLDDT + surface exposure filter)")
+    p.add_argument("--structure-gpu", default="0",
+                   help="GPU device index for AlphaFold2 (default: 0)")
+    p.add_argument("--structure-data-dir", default="/data_fast/aplha_data",
+                   help="AF2 database directory (default: /data_fast/aplha_data)")
+    p.add_argument("--protein-fasta", default=None,
+                   help="Wild-type protein FASTA (default: auto-locate pVACseq 'protein_fasta')")
     return p.parse_args()
 
 
@@ -89,6 +99,17 @@ def main():
         species=args.species,
         output_dir=out_dir,
     )
+
+    # Step 2b (Phase 2, opt-in): AlphaFold2 structural validation
+    if args.structure:
+        print("\n[pipeline] Step 2b: AlphaFold2 structural validation (pLDDT + surface exposure)...")
+        json_path = annotate_candidates(
+            candidates_json_path=json_path,
+            output_dir=out_dir,
+            protein_fasta_path=args.protein_fasta,
+            data_dir=args.structure_data_dir,
+            gpu_device=args.structure_gpu,
+        )
 
     # Step 3: Generate visualizations
     print("\n[pipeline] Step 3/4: Generating visualizations...")
