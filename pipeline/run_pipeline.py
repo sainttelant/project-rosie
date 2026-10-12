@@ -54,6 +54,11 @@ def parse_args():
                    help="AF2 database directory (default: /data_fast/aplha_data)")
     p.add_argument("--protein-fasta", default=None,
                    help="Wild-type protein FASTA (default: auto-locate pVACseq 'protein_fasta')")
+    p.add_argument("--skip-gemma", action="store_true",
+                   help="Skip Gemma 4 clinical report (no GCP credentials needed)")
+    # New flag: generate bilingual report (English + Chinese)
+    p.add_argument("--bilingual", action="store_true",
+                   help="Generate clinical report in both English and Chinese")
     return p.parse_args()
 
 
@@ -116,23 +121,28 @@ def main():
     png_paths = generate_all(candidates_json_path=json_path, tsv_path=tsv_path)
 
     # Step 4: Gemma 4 clinical report
-    print("\n[pipeline] Step 4/4: Generating clinical report with Gemma 4...")
-    report = generate_clinical_report(
-        candidates_json_path=json_path,
-        binding_affinity_png=png_paths["binding_affinity"],
-        mutation_landscape_png=png_paths["mutation_landscape"],
-    )
     report_path = str(Path(out_dir) / f"{args.sample_name}_clinical_report.md")
-    Path(report_path).write_text(report)
-    print(f"[gemma] Clinical report → {report_path}")
+    if args.skip_gemma:
+        print("\n[pipeline] Step 4/4: Skipping Gemma 4 report (--skip-gemma)")
+    else:
+        print("\n[pipeline] Step 4/4: Generating clinical report with Gemma 4...")
+        report = generate_clinical_report(
+            candidates_json_path=json_path,
+            binding_affinity_png=png_paths["binding_affinity"],
+            mutation_landscape_png=png_paths["mutation_landscape"],
+            bilingual=args.bilingual,
+        )
+        Path(report_path).write_text(report)
+        print(f"[gemma] Clinical report → {report_path}")
 
     # Step 5: mRNA design
     print("\n[pipeline] Step 5/5: Designing mRNA vaccine construct...")
-    fasta_path = design_mrna(
+    mrna_result = design_mrna(
         candidates_json_path=json_path,
         output_dir=out_dir,
         species=args.species,
     )
+    fasta_path = mrna_result["fasta_path"] if isinstance(mrna_result, dict) else str(mrna_result)
 
     print(f"\n{'='*60}")
     print(f"  DONE")

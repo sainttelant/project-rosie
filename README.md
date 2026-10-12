@@ -555,10 +555,35 @@ docker build -t rosie-pipeline .
 3. `pip install -r requirements.txt`（pvactools、**mhcflurry**、**logomaker**、matplotlib、biopython、google-cloud-storage、google-genai 等）
 4. 复制 `modules/`、`run_pipeline.py`、`run_cloud.py` 到 `/app`
 
-> **注意：**
-> - MHCflurry 是 Python 原生包，通过 PyPI 安装。pVACseq 调用 MHCflurry 时通过 IEDB REST API 进行预测。
-> - MixMHCpred 3.0 是 bash + Python 工具，从 GitHub 仓库（v3.0 tag）克隆安装，依赖 `mafft`（序列比对）和 `logomaker`（motif 可视化）。其 pan-allele 神经网络模型对非人类等位基因（如犬类 DLA）的支持优于 MHCflurry。
-> - 两者可同时使用：`--predictors MHCflurry MixMHCpred`，pVACseq 会并行调用并合并结果。
+ > **注意：**
+ > - MHCflurry 是 Python 原生包，通过 PyPI 安装。pVACseq 调用 MHCflurry 时通过 IEDB REST API 进行预测。
+ > - MixMHCpred 3.0 是 bash + Python 工具，从 GitHub 仓库（v3.0 tag）克隆安装，依赖 `mafft`（序列比对）和 `logomaker`（motif 可视化）。其 pan-allele 神经网络模型对非人类等位基因（如犬类 DLA）的支持优于 MHCflurry。
+ > - 两者可同时使用：`--predictors MHCflurry MixMHCpred`，pVACseq 会并行调用并合并结果。
+
+## MHCflurry (PyTorch backend)
+
+The original pipeline used **MHCflurry 2.0.6**, which depended on **TensorFlow/Keras**. Recent TensorFlow releases removed the `keras.backend.set_session` API, causing a crash when pVACseq invoked MHCflurry. To eliminate this incompatibility we now **upgrade to MHCflurry ≥ 2.3.13**. Starting from version 2.3 the library uses **PyTorch** as its backend, so no TensorFlow/Keras packages are required.
+
+### What changed
+* **Dockerfile** – the `mhcflurry` entry in `pipeline/requirements.txt` is now `mhcflurry\u003e=2.3.13`. The previous monkey‑patch that wrapped `set_session` has been removed.
+* **Runtime** – MHCflurry runs on the CPU by default, but can also leverage a GPU if one is available (the same `--gpus` flag used for AlphaFold2). No additional environment variables are needed.
+* **Allele naming** – the MHCflurry whitelist (`MHCflurry.txt`) stores canine DLA alleles in **star format** (e.g. `DLA-88*501:01`). When you specify alleles on the command line you can use either the star format or the numeric format (`DLA-8850101`). pVACseq will automatically map the numeric form to the star form during validation.
+
+### Usage example
+```bash
+docker run --rm \
+  -v $(pwd)/output:/app/output \
+  rosie-pipeline \
+  python run_pipeline.py \
+    --vcf /app/output/tumor_annotated.vcf \
+    --sample-name canine_mammary_001 \
+    --alleles DLA-8803401,DLA-8850101 \
+    --predictors MHCflurry \
+    --species canis_lupus_familiaris \
+    --output-dir /app/output
+```
+
+The pipeline will now run without TensorFlow‑related errors and will correctly handle the DLA alleles.
 
 ### 运行模式一：本地 CLI（run_pipeline.py）
 
@@ -731,16 +756,21 @@ MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQ
 EOF
 
 # 跑一次预测（约 5–15 分钟）
+# 注意：--max_template_date / --use_gpu_relax 是必填的命令行 flag（不是环境变量！），
+# 镜像入口 run_alphafold.sh 只把 "$@" 原样传给 run_alphafold.py，
+# 缺失会报 "must have a value other than None"
 docker run --rm \
   --gpus '"device=0"' \
   -v /data_fast/aplha_data:/data_fast/aplha_data:ro \
   -v /tmp:/tmp \
-  alphafold:local \
+  aphfd:local \
     --fasta_paths=/tmp/smoke_test.fasta \
     --output_dir=/tmp/af2_smoke \
     --db_preset=reduced_dbs \
     --model_preset=monomer \
     --models_to_relax=best \
+    --max_template_date=2021-09-30 \
+    --use_gpu_relax=true \
     --data_dir=/data_fast/aplha_data \
     --small_bfd_database_path=/data_fast/aplha_data/small_bfd/bfd-first_non_consensus_sequences.fasta \
     --mgnify_database_path=/data_fast/aplha_data/mgnify/mgy_clusters_2022_05.fa \
@@ -754,6 +784,36 @@ ls /tmp/af2_smoke/smoke_test/
 # 预期: ranked_0.pdb  ranking_debug.json  relax_metrics.json  timings.json
 python -c "import json; d=json.load(open('/tmp/af2_smoke/smoke_test/ranking_debug.json')); print('pLDDT 范围:', min(min(v.values()) for v in d.values()), '-', max(max(v.values()) for v in d.values()))"
 ```
+
+
+## 查看数据下载情况 
+
+如果下载中断了，重新拉起的命令如下：
+
+方式一：一键续跑全部 3 个（推荐，和之前一样的 tmux 方式）
+
+tmux kill-session -t af2_dbs 2>/dev/null
+tmux new-session -d -s af2_dbs 'bash -c "cd /data_fast/aplha_data && for s in download_pdb70 download_pdb_mmcif download_pdb_seqres; do echo \"=== \$(date) START \$s ===\"; bash ~/alphafold/scripts/\$s.sh /data_fast/aplha_data && echo \"=== \$s OK ===\" || echo \"=== \$s OK ===\"; done; echo ALL_DONE=\$? > /data_fast/aplha_data/dbs_done.flag" >> /data_fast/aplha_data/dbs_download.log 2>&1'
+
+已下完的脚本会快速跳过（aria2 检测到文件完整 + 无 .aria2 残留就直接完成），未完成的从断点续传。
+
+方式二：只续跑某一个（比如只断了 pdb70）
+
+tmux new-session -d -s pdb70 'bash ~/alphafold/scripts/download_pdb70.sh /data_fast/aplha_data >> /data_fast/aplha_data/dbs_download.log 2>&1'
+
+把 download_pdb70 换成 download_pdb_mmcif 或 download_pdb_seqres 即可。
+
+查看状态
+
+# 实时进度
+tr '\r' '\n' < /data_fast/aplha_data/dbs_download.log | grep -E "DL:|OK|FAILED" | tail -5
+
+# 是否全部完成
+cat /data_fast/aplha_data/dbs_done.flag 2>/dev/null   # 出现 ALL_DONE=0 即完成
+
+# tmux 会话是否还活着
+tmux ls
+
 
 ### 模块级测试（structure.py 独立运行）
 
@@ -775,6 +835,33 @@ python modules/structure.py \
 ### 全链路测试（run_pipeline.py --structure）
 
 一条命令跑完整流水线（pVACseq → 打分 → **AF2 结构验证** → 图表 → Gemma 报告 → mRNA 设计）：
+
+
+
+### 运行容器 
+docker run --rm -it \
+  --network host \
+  --shm-size=24g \
+  --gpus all \
+  --name=cure_pipeline \
+  -v /home/wilsxue.adm/cure/project-rosie/pipeline/run_pipeline.py:/app/run_pipeline.py \
+  -v /home/wilsxue.adm/cure/project-rosie/pipeline/modules:/app/modules \
+  -v /home/wilsxue.adm/cure/project-rosie/pipeline/data:/workspace/data \
+  -v /home/wilsxue.adm/cure/project-rosie/pipeline/output:/workspace/output \
+  -v /data_fast/basemodel_testdata:/workspace/alpha_data \
+  -e GEMMA_BACKEND=ollama \
+  -e OLLAMA_MODEL=gemma4:31b \
+  -e OLLAMA_URL=http://localhost:11434 \
+  rosie_pipeline:latest \
+    --vcf /workspace/data/canine_mammary_tumor_sample.vcf \
+    --sample-name canine_mammary_001 \
+    --alleles DLA-8850101 \
+    --predictors MHCflurry \
+    --bilingual \
+    --species canis_lupus_familiaris \
+    --output-dir /workspace/output
+
+
 
 ```bash
 cd pipeline

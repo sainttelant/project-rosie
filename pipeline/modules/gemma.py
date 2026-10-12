@@ -83,10 +83,64 @@ def _encode_image(path: str) -> tuple[str, str]:
     return base64.b64encode(data).decode(), "image/png"
 
 
+# ── Local (Ollama) backend ────────────────────────────────────────────────────
+# Set GEMMA_BACKEND=ollama to route report generation through a local Ollama
+# server instead of Vertex AI. Useful for offline / zero-cost runs.
+OLLAMA_URL   = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:31b")
+
+
+def _backend() -> str:
+    return os.getenv("GEMMA_BACKEND", "vertex").strip().lower()
+
+
+def _generate_via_ollama(system_prompt: str, summary: dict,
+                         binding_affinity_png: str, mutation_landscape_png: str) -> str:
+    """Generate the clinical report via a local Ollama server (OpenAI-style chat API).
+
+    gemma4 is a *thinking* model: it emits a `thinking` field before the final
+    `content`. We give it a generous token budget so the answer is not cut off
+    inside the reasoning phase.
+    """
+    import requests
+
+    text = (
+        system_prompt + "\n\n"
+        + "Here are the ranked neoantigen candidates:\n\n```json\n"
+        + json.dumps(summary, indent=2) + "\n```\n\n"
+        + "Please write the clinical report now."
+    )
+
+    images = []
+    for p in (binding_affinity_png, mutation_landscape_png):
+        if p and Path(p).exists():
+            images.append(base64.b64encode(Path(p).read_bytes()).decode())
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": [{"role": "user", "content": text, "images": images}],
+        "stream": False,
+        "options": {"num_predict": 4096, "temperature": 0.3},
+    }
+
+    print(f"[gemma] Using local Ollama backend: {OLLAMA_URL} / {OLLAMA_MODEL}", flush=True)
+    resp = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=900)
+    resp.raise_for_status()
+    data = resp.json()
+    content = data.get("message", {}).get("content", "").strip()
+    if not content:
+        raise RuntimeError(
+            "Ollama returned an empty report. "
+            f"thinking={data.get('message', {}).get('thinking', '')[:200]!r}"
+        )
+    return content
+
+
 def generate_clinical_report(
     candidates_json_path: str,
     binding_affinity_png: str,
     mutation_landscape_png: str,
+    bilingual: bool = False,
 ) -> str:
     client = genai.Client(vertexai=True, project=GCP_PROJECT, location=GCP_REGION)
 
@@ -95,6 +149,9 @@ def generate_clinical_report(
 
     species = candidates.get("species", "homo_sapiens")
     system_prompt = _build_system_prompt(species)
+    # If bilingual output is requested, extend the prompt with explicit instruction.
+    if bilingual:
+        system_prompt += "\nPlease write the clinical report first in English, then repeat the same content in Chinese."
 
     summary = {
         "case_id":                    candidates["case_id"],
@@ -105,20 +162,38 @@ def generate_clinical_report(
         "top_candidates":             candidates["top_candidates"][:5],
     }
 
-    ba_data, ba_mime   = _encode_image(binding_affinity_png)
-    ml_data, ml_mime   = _encode_image(mutation_landscape_png)
+    # ── Local Ollama backend (offline / zero-cost) ──
+    if _backend() == "ollama":
+        report = _generate_via_ollama(
+            system_prompt=system_prompt,
+            summary=summary,
+            binding_affinity_png=binding_affinity_png,
+            mutation_landscape_png=mutation_landscape_png,
+        )
+        return _embed_images(
+            report=report,
+            binding_affinity_png=binding_affinity_png,
+            mutation_landscape_png=mutation_landscape_png,
+        )
 
-    contents = [
-        types.Content(role="user", parts=[
-            types.Part(text=system_prompt),
-            types.Part(text=f"Here are the ranked neoantigen candidates:\n\n```json\n{json.dumps(summary, indent=2)}\n```"),
-            types.Part(text="Binding affinity chart (top 20 candidates by IC50):"),
-            types.Part(inline_data=types.Blob(mime_type=ba_mime, data=ba_data)),
-            types.Part(text="Somatic mutation landscape:"),
-            types.Part(inline_data=types.Blob(mime_type=ml_mime, data=ml_data)),
-            types.Part(text="Please write the clinical report now."),
-        ])
+    parts = [
+        types.Part(text=system_prompt),
+        types.Part(text=f"Here are the ranked neoantigen candidates:\n\n```json\n{json.dumps(summary, indent=2)}\n```"),
     ]
+
+    if Path(binding_affinity_png).exists():
+        ba_data, ba_mime = _encode_image(binding_affinity_png)
+        parts.append(types.Part(text="Binding affinity chart:"))
+        parts.append(types.Part(inline_data=types.Blob(mime_type=ba_mime, data=ba_data)))
+
+    if Path(mutation_landscape_png).exists():
+        ml_data, ml_mime = _encode_image(mutation_landscape_png)
+        parts.append(types.Part(text="Somatic mutation landscape:"))
+        parts.append(types.Part(inline_data=types.Blob(mime_type=ml_mime, data=ml_data)))
+
+    parts.append(types.Part(text="Please write the clinical report now."))
+
+    contents = [types.Content(role="user", parts=parts)]
 
     response = client.models.generate_content(
         model=MODEL,

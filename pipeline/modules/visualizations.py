@@ -20,27 +20,49 @@ THRESHOLD   = 500  # IC50 nM hard filter line
 
 def generate_binding_affinity_chart(candidates: list[dict], output_path: str) -> None:
     if not candidates:
+        # Still create a placeholder so downstream steps don't crash
+        fig, ax = plt.subplots(figsize=(14, 6))
+        ax.text(0.5, 0.5, "No candidates passed filters", ha="center", va="center", fontsize=14, color="#999")
+        ax.set_title("Neoantigen Binding Affinity — No Candidates", fontsize=13, fontweight="bold", color=BRAND_BLUE)
+        ax.axis("off")
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[visualizations] Binding affinity chart (empty) → {output_path}")
         return
 
     peptides = [f"{c['peptide']}\n({c['gene']})" for c in candidates]
-    ic50s    = [c["ic50_nm"] for c in candidates]
     scores   = [c["composite_score"] for c in candidates]
+    colors   = [BRAND_BLUE if s >= 0.5 else "#6a9fd4" for s in scores]
 
-    colors = [BRAND_BLUE if s >= 0.5 else "#6a9fd4" for s in scores]
+    # Detect whether IC50 or percentile data is available
+    has_ic50 = all(c.get("ic50_nm") is not None for c in candidates)
 
     fig, ax = plt.subplots(figsize=(14, 6))
-    bars = ax.bar(range(len(peptides)), ic50s, color=colors, edgecolor="white", linewidth=0.5)
 
-    ax.axhline(THRESHOLD, color="red", linestyle="--", linewidth=1.2, label=f"IC50 threshold ({THRESHOLD} nM)")
+    if has_ic50:
+        ic50s = [c["ic50_nm"] for c in candidates]
+        bars = ax.bar(range(len(peptides)), ic50s, color=colors, edgecolor="white", linewidth=0.5)
+        ax.axhline(THRESHOLD, color="red", linestyle="--", linewidth=1.2, label=f"IC50 threshold ({THRESHOLD} nM)")
+        ax.set_ylabel("IC50 Binding Affinity (nM)", fontsize=11)
+        ax.set_ylim(0, min(THRESHOLD * 1.2, max(ic50s) * 1.2))
+    else:
+        pcts = [c["percentile_rank"] for c in candidates]
+        bars = ax.bar(range(len(peptides)), pcts, color=colors, edgecolor="white", linewidth=0.5)
+        ax.axhline(50, color="red", linestyle="--", linewidth=1.2, label="Percentile threshold (50)")
+        ax.set_ylabel("Binding Percentile (lower = stronger)", fontsize=11)
+        ax.set_ylim(0, 100)
+
     ax.set_xticks(range(len(peptides)))
     ax.set_xticklabels(peptides, rotation=45, ha="right", fontsize=8)
-    ax.set_ylabel("IC50 Binding Affinity (nM)", fontsize=11)
     ax.set_title("Neoantigen Binding Affinity — Top Candidates", fontsize=13, fontweight="bold", color=BRAND_BLUE)
-    ax.set_ylim(0, min(THRESHOLD * 1.2, max(ic50s) * 1.2))
 
     strong = mpatches.Patch(color=BRAND_BLUE, label="Composite score ≥ 0.5 (priority)")
     weak   = mpatches.Patch(color="#6a9fd4", label="Composite score < 0.5")
-    ax.legend(handles=[strong, weak, ax.get_lines()[0]], fontsize=9)
+    handles = [strong, weak]
+    if ax.get_lines():
+        handles.append(ax.get_lines()[0])
+    ax.legend(handles=handles, fontsize=9)
 
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -61,6 +83,14 @@ def generate_mutation_landscape(tsv_path: str | None, candidates: list[dict], ou
         counts = pd.Series([c["variant_type"] for c in candidates if c.get("variant_type")]).value_counts()
 
     if counts.empty:
+        fig, ax = plt.subplots(figsize=(7, 7))
+        ax.text(0.5, 0.5, "No mutation data", ha="center", va="center", fontsize=14, color="#999")
+        ax.set_title("Somatic Mutation Landscape — No Data", fontsize=13, fontweight="bold", color=BRAND_BLUE, pad=20)
+        ax.axis("off")
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[visualizations] Mutation landscape chart (empty) → {output_path}")
         return
 
     palette = [BRAND_BLUE, BRAND_GREEN, "#e67e22", "#8e44ad", "#c0392b", "#16a085"]

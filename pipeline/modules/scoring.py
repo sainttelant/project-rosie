@@ -46,45 +46,99 @@ def _vaf_score(vaf) -> float:
         return 0.0
 
 
+def _percentile_score(pct: float) -> float:
+    """Convert MHC binding percentile (0-100, lower = stronger binder) to 0-1 score.
+    0% → 1.0 (best), 100% → 0.0 (worst)."""
+    pct = max(0.0, min(100.0, float(pct)))
+    return 1.0 - pct / 100.0
+
+
 def score_candidates(tsv_path: str, sample_name: str, alleles: list[str],
                      species: str, output_dir: str) -> str:
     df = pd.read_csv(tsv_path, sep="\t", low_memory=False)
 
-    ic50_col = "Median MT IC50 Score" if "Median MT IC50 Score" in df.columns else "Best MT IC50 Score"
     vaf_col  = "Tumor DNA VAF"
+    df[vaf_col] = pd.to_numeric(df[vaf_col], errors="coerce").fillna(0)
 
-    # Hard filters
-    df[ic50_col] = pd.to_numeric(df[ic50_col], errors="coerce")
-    df[vaf_col]  = pd.to_numeric(df[vaf_col],  errors="coerce").fillna(0)
-    filtered = df[(df[ic50_col] <= HARD_FILTER_IC50) & (df[vaf_col] >= HARD_FILTER_VAF)].copy()
+    # Detect whether IC50 (nM) data is available.
+    # MixMHCpred outputs binding scores / percentiles, NOT IC50 nM.
+    ic50_col = None
+    for candidate_col in ("Median MT IC50 Score", "Best MT IC50 Score"):
+        if candidate_col in df.columns:
+            vals = pd.to_numeric(df[candidate_col], errors="coerce")
+            if vals.notna().any():
+                ic50_col = candidate_col
+                break
 
-    # Composite score
-    filtered["_score"] = (
-        WEIGHT_IC50          * filtered[ic50_col].apply(_ic50_score)
-        + WEIGHT_IMMUNOGENICITY * filtered.apply(_immunogenicity_score, axis=1)
-        + WEIGHT_VAF           * filtered[vaf_col].apply(_vaf_score)
-    )
+    if ic50_col is not None:
+        # --- IC50-based path (MHCflurry, NetMHCpan, etc.) ---
+        df[ic50_col] = pd.to_numeric(df[ic50_col], errors="coerce")
+        filtered = df[(df[ic50_col] <= HARD_FILTER_IC50) & (df[vaf_col] >= HARD_FILTER_VAF)].copy()
 
-    top = filtered.nlargest(TOP_N, "_score").reset_index(drop=True)
+        filtered["_score"] = (
+            WEIGHT_IC50          * filtered[ic50_col].apply(_ic50_score)
+            + WEIGHT_IMMUNOGENICITY * filtered.apply(_immunogenicity_score, axis=1)
+            + WEIGHT_VAF           * filtered[vaf_col].apply(_vaf_score)
+        )
+        top = filtered.nlargest(TOP_N, "_score").reset_index(drop=True)
 
-    candidates = []
-    for i, row in top.iterrows():
-        candidates.append({
-            "rank": i + 1,
-            "peptide": str(row.get("MT Epitope Seq", "")),
-            "wildtype_peptide": str(row.get("WT Epitope Seq", "")),
-            "mutation": str(row.get("Mutation", "")),
-            "hgvsp": str(row.get("HGVSp", "")),
-            "gene": str(row.get("Gene Name", "")),
-            "transcript": str(row.get("Transcript", "")),
-            "ic50_nm": round(float(row[ic50_col]), 2),
-            "percentile_rank": round(float(row.get("Best MT Percentile", 0) or 0), 2),
-            "tumor_vaf": round(float(row[vaf_col]), 4),
-            "immunogenicity_score": round(_immunogenicity_score(row), 4),
-            "composite_score": round(float(row["_score"]), 4),
-            "hla_allele": str(row.get("HLA Allele", "")),
-            "variant_type": str(row.get("Variant Type", "")),
-        })
+        candidates = []
+        for i, row in top.iterrows():
+            candidates.append({
+                "rank": i + 1,
+                "peptide": str(row.get("MT Epitope Seq", "")),
+                "wildtype_peptide": str(row.get("WT Epitope Seq", "")),
+                "mutation": str(row.get("Mutation", "")),
+                "hgvsp": str(row.get("HGVSp", "")),
+                "gene": str(row.get("Gene Name", "")),
+                "transcript": str(row.get("Transcript", "")),
+                "ic50_nm": round(float(row[ic50_col]), 2),
+                "percentile_rank": round(float(row.get("Best MT Percentile", 0) or 0), 2),
+                "tumor_vaf": round(float(row[vaf_col]), 4),
+                "immunogenicity_score": round(_immunogenicity_score(row), 4),
+                "composite_score": round(float(row["_score"]), 4),
+                "hla_allele": str(row.get("HLA Allele", "")),
+                "variant_type": str(row.get("Variant Type", "")),
+            })
+    else:
+        # --- Percentile-based path (MixMHCpred, etc.) ---
+        # Lower percentile = stronger binder.  Use top 50th percentile as filter.
+        pct_col = "Best MT Percentile" if "Best MT Percentile" in df.columns else "Median MT Percentile"
+        df[pct_col] = pd.to_numeric(df[pct_col], errors="coerce")
+        PCT_THRESHOLD = 50.0  # keep top 50% binders
+        filtered = df[(df[pct_col] <= PCT_THRESHOLD) & (df[vaf_col] >= HARD_FILTER_VAF)].copy()
+
+        # Also require MT percentile < WT percentile (neoantigen must bind better than WT)
+        wt_pct_col = "Corresponding WT Percentile" if "Corresponding WT Percentile" in df.columns else "Median WT Percentile"
+        if wt_pct_col in filtered.columns:
+            filtered[wt_pct_col] = pd.to_numeric(filtered[wt_pct_col], errors="coerce")
+            filtered = filtered[filtered[pct_col] < filtered[wt_pct_col]]
+
+        filtered["_score"] = (
+            WEIGHT_IC50          * filtered[pct_col].apply(_percentile_score)
+            + WEIGHT_IMMUNOGENICITY * filtered.apply(_immunogenicity_score, axis=1)
+            + WEIGHT_VAF           * filtered[vaf_col].apply(_vaf_score)
+        )
+        top = filtered.nlargest(TOP_N, "_score").reset_index(drop=True)
+
+        candidates = []
+        for i, row in top.iterrows():
+            candidates.append({
+                "rank": i + 1,
+                "peptide": str(row.get("MT Epitope Seq", "")),
+                "wildtype_peptide": str(row.get("WT Epitope Seq", "")),
+                "mutation": str(row.get("Mutation", "")),
+                "hgvsp": str(row.get("HGVSp", "")),
+                "gene": str(row.get("Gene Name", "")),
+                "transcript": str(row.get("Transcript", "")),
+                "ic50_nm": None,
+                "percentile_rank": round(float(row[pct_col]), 2),
+                "tumor_vaf": round(float(row[vaf_col]), 4),
+                "immunogenicity_score": round(_immunogenicity_score(row), 4),
+                "composite_score": round(float(row["_score"]), 4),
+                "hla_allele": str(row.get("HLA Allele", "")),
+                "variant_type": str(row.get("Variant Type", "")),
+            })
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

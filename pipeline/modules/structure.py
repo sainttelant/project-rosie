@@ -196,7 +196,10 @@ def predict_structures(
         "--db_preset=reduced_dbs",
         "--model_preset=monomer",
         "--models_to_relax=best",
-        "--enable_gpu_relax=true",
+        # run_alphafold.py requires these two flags to be non-None
+        # (absl flags, NOT env vars — the image entrypoint just passes "$@"):
+        "--max_template_date=2021-09-30",
+        "--use_gpu_relax=true",
     ]
     for name, p in db_paths:
         if name != "data_dir":

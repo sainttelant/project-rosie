@@ -1,5 +1,6 @@
-pvactools
-mhcflurry
+# pvactools is installed separately without its pinned mhcflurry dependency
+mhcflurry>=2.3.13
+mhcnuggets
 logomaker
 matplotlib
 biopython
