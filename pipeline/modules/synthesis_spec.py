@@ -50,18 +50,19 @@ def _build_epitope_table(
         c = by_pep.get(p)
         if c is None:
             rows.append({
-                "rank": i, "peptide": p, "gene": "—",
+                "rank": i, "peptide": p, "gene": "Unmatched / experimental helper",
                 "mutation": "—", "allele": "—", "ic50": "—", "category": "—",
             })
             continue
+        ic50 = c.get("ic50_nm")
         rows.append({
             "rank": i,
             "peptide": p,
             "gene": c.get("gene") or "—",
             "mutation": c.get("hgvsp") or c.get("mutation") or "—",
             "allele": c.get("hla_allele") or "—",
-            "ic50": f"{float(c.get('ic50_nm', 0)):.1f}",
-            "category": _binding_category(float(c.get("ic50_nm", 9999))),
+            "ic50": f"{float(ic50):.1f}" if ic50 is not None else "NA",
+            "category": _binding_category(float(ic50)) if ic50 is not None else "Not available (no IC50)",
         })
     return rows
 
@@ -78,6 +79,10 @@ def generate_synthesis_spec(
         top_candidates=candidates.get("top_candidates", []),
         peptides_in_construct=design_data["peptides"],
     )
+    if design_data.get("cd4_helper"):
+        for row in epitope_table:
+            if row["peptide"] == design_data["cd4_helper"]:
+                row["gene"] = "CD4 helper (experimental)"
 
     species = design_data["species"]
     species_label = _SPECIES_LABELS.get(species, species.replace("_", " ").title())

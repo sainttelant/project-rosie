@@ -30,10 +30,58 @@ The entire design process — previously requiring months of expert manual work 
 | File Storage | Google Cloud Storage | VCF uploads, reports, mRNA sequences. 30-day lifecycle on pipeline work files |
 | Pipeline | Python on Cloud Run Jobs | Downloads VCF from GCS, runs all 5 pipeline stages, POSTs progress callbacks after each stage |
 | Neoantigen Prediction | pVACtools + MHCflurry | Peptide candidates, MHC binding affinity scoring across all DLA alleles |
-| mRNA Design | Python + Biopython + canine codon table | Codon-optimized mRNA with 5'UTR, 3'UTR, poly-A(60) tail |
+| mRNA Design | Python + Biopython + canine codon table | Synonymous CDS GC adjustment (40–60%), reference HBB 3'UTR, poly-A(100) tail |
 | Scoring | Python threshold pipeline | IC50 < 500 nM filter + weighted ranking. Transparent, auditable, ~50 lines |
 | Gemma 4 | Gemma 4 27B IT via Vertex AI | Clinical report generation, multimodal chart interpretation, conversational assistant |
 | Auth (GCP) | Service-account credentials in Vercel env | WIF integration also wired (see `src/lib/gcp-auth.ts`); production currently uses the static-key fallback for reliability |
+
+### Pipeline Overview
+
+| Stage | Output | Current behavior |
+|---|---|---|
+| MHC-I prediction | `MHC_Class_I/<VCF-sample>.MHC_I.all_epitopes.tsv` | 8–11 nt peptides by default; supported alleles depend on predictor |
+| Optional MHC-II prediction (local CLI) | `mhc_ii/MHC_Class_II/<VCF-sample>.MHC_II.all_epitopes.tsv` | Explicit II-class alleles; default 15 nt peptides; supported lengths 11–30 nt |
+| Scoring | `<sample>_candidates.json` | Existing MHC-I ranking unchanged; optional II-class evidence in `mhc_ii` and `visualization_paths.mhc_ii_tsv` |
+| Visualization | `<sample>_binding_affinity.png`, `<sample>_mutation_landscape.png` | MHC-I charts; MHC-II TSV is an evidence artifact, not a chart |
+| Report | `<sample>_clinical_report.md` | Gemma report; deterministic II-class appendix when enabled, also available with `--skip-gemma` |
+| mRNA design | `<sample>_vaccine_mrna.fasta`, `<sample>_mrna_design_summary.md` | Single-copy HBB 3'UTR (134 nt), encoded poly-A (100 nt), CDS GC target 40–60% |
+| Synthesis specification (cloud/demo) | Templated synthesis report | Uses the same design lengths and GC target; CLI emits FASTA and design summary |
+
+The HBB 3'UTR is taken from [NCBI RefSeq NM_000518.5](https://www.ncbi.nlm.nih.gov/nuccore/NM_000518.5), positions 495–628 (1-based, inclusive). This is a single reference copy, not a claim to reproduce a commercial vaccine design. CDS coordinates in design data are **0-based, half-open**, include ATG and the stop codon, and satisfy `mrna_seq[cds_start:cds_end] == cds_seq`. A first epitope beginning with M supplies the initiation Met; other first epitopes still need an initiation Met.
+
+#### Local CLI Examples
+
+Reuse the checked-in MHC-I predictions without cloud credentials:
+
+```bash
+python pipeline/run_pipeline.py \
+  --vcf pipeline/data/canine_mammary_tumor_sample.vcf \
+  --sample-name canine_mammary_001 \
+  --alleles DLA-8850101,DLA-8850801 --predictors MixMHCpred \
+  --species canis_lupus_familiaris \
+  --skip-prediction --tsv pipeline/output/MHC_Class_I/TUMOR.MHC_I.all_epitopes.tsv \
+  --skip-gemma --output-dir /tmp/rosie-design-validation
+```
+
+For a **human case with independently typed class-II alleles**, add `--mhc-ii --mhc-ii-alleles 'DRB1*01:01' --mhc-ii-predictors NetMHCIIpan --mhc-ii-epitope-lengths 15` to its normal CLI invocation. Do not add human alleles to the canine example. MHC-II results are previewed separately (first 20 unfiltered rows) and are not automatically included in the CTL construct. Existing II-class results can be imported with `--mhc-ii-tsv <path>` plus matching II-class configuration; the CLI validates their alleles and peptide lengths.
+
+`--cd4-helper` optionally appends PADRE (`AKFVAAWTLKAAA`); `--cd4-helper <sequence>` supplies a custom peptide. It is disabled by default, counted in the encoded payload, and labeled experimental. PADRE is not a validated canine helper, and AAY junctions do not establish class-II processing.
+
+#### Known Issues
+
+- `pvacseq` must be installed for fresh prediction. The pipeline image installs **MixMHCpred (class I)**, not **MixMHC2pred (class II)**. Install the latter separately under its license if selected; NetMHCIIpan through IEDB needs network access or a configured local installation.
+- Predictor allele support must be checked with `pvactools valid_alleles -p <predictor>`. Unsupported canine class-II alleles fail explicitly; no human-allele substitution is performed. The locally installed MixMHC2pred whitelist contains no DLA alleles, so canine MHC-II prediction is not currently validated.
+- The codon table remains canine for all species. GC adjustment is deterministic and preserves translation, but is not a validated CAI or RNA-structure optimizer; some amino-acid sequences cannot meet the target.
+- Full RNA GC is not expected to be 40–60% because UTRs and poly-A are included. The checked-in TSV and a fresh local-container run from the sample VCF both produce 397 nt, with CDS GC 59.3% and full RNA GC 35.5%. Other candidate sets have different lengths. In the fresh run, MixMHCpred skipped unsupported DLA-88*508:01; predictions used DLA-88*501:01 only.
+- The new MHC-II and CD4 flags are local CLI features; Cloud Run and the frontend do not expose them. Computational results are research candidates, not evidence of clinical efficacy.
+
+#### Experimental Validation
+
+See [实验验证与判读框架](docs/experimental-validation.cn.md) for controls, assay materials, ELISPOT, MHC multimer staining, and prespecified interpretation criteria. No wet-lab validation is claimed.
+
+#### Design Change Log
+
+- 2026-10-14: Replaced filler 3'UTR with reference HBB (134 nt), extended poly-A from 60 to 100 nt, added synonymous CDS GC adjustment, removed duplicate initiation Met, and made CDS coordinates explicit. Added opt-in MHC-II evidence and experimental CD4 helper support, with regression tests.
 
 ### Gemma 4 — Four Active Roles
 
@@ -83,8 +131,8 @@ The mRNA **synthesis specification** is rendered from a **Jinja template**, not 
 - Clinical report mentions canine species, DLA alleles by name, correct IC50 interpretation
 
 **mRNA Sequence Design (M3)**
-- Top epitopes → codon-optimized CDS → 5'UTR, Kozak, AAY linkers, 3'UTR, poly-A(60)
-- 251 nt construct, 54.8% GC in CDS (canine codon table applied)
+- Top epitopes → synonymous GC-adjusted CDS → 5'UTR, Kozak, AAY linkers, reference HBB 3'UTR, poly-A(100)
+- Checked-in TSV regression: 397 nt construct, 59.3% GC in CDS; optional CD4 helper remains disabled
 
 **Frontend + API (M4)**
 - Landing page, demo viewer, auth (email/password), dashboard, submit form, case report page
@@ -180,7 +228,7 @@ The 16× compute cost increase and 100× storage increase are the real reasons t
 - **AlphaFold-Multimer / ESMFold** for peptide-MHC structure prediction. Adds ~5–10% ranking precision over sequence-only MHCflurry, at the cost of GPU hours per case. Worthwhile only after FASTQ ingestion is shipped.
 - **PyClone-VI** for proper subclonal clonality estimation (currently using VAF as a proxy).
 - **Nextflow** orchestration replacing the current Python entry script — production reproducibility story for regulatory filings.
-- **LinearDesign** for mRNA secondary-structure-aware codon optimization (currently using highest-frequency codon per amino acid).
+- **LinearDesign** for mRNA secondary-structure-aware codon optimization (currently using highest-frequency codons with synonymous CDS GC adjustment).
 - **Multi-construct boost dosing** — design a prime construct (top 3 epitopes) and a boost construct (next 3) for sequential administration.
 
 ---
@@ -857,6 +905,7 @@ docker run --rm -it \
     --sample-name canine_mammary_001 \
     --alleles DLA-8850101 \
     --predictors MHCflurry \
+    --review-model deepseek-r1:70b \
     --bilingual \
     --species canis_lupus_familiaris \
     --output-dir /workspace/output

@@ -23,7 +23,7 @@ This document specifies the synthesis of a personalized multi-epitope mRNA vacci
 | Source genes | {{ genes | join(', ') }} |
 | Total construct length | {{ total_len }} nt |
 | CDS length | {{ cds_len }} nt |
-| GC content (CDS) | {{ "%.1f"|format(gc_cds * 100) }}% {% if 0.50 <= gc_cds <= 0.70 %}✓ within 50–70% target{% else %}⚠ outside 50–70% target{% endif %} |
+| GC content (CDS) | {{ "%.1f"|format(gc_cds * 100) }}% {% if 0.40 <= gc_cds <= 0.60 %}✓ within 40–60% target{% else %}⚠ outside 40–60% target (sequence-constrained){% endif %} |
 | GC content (full mRNA) | {{ "%.1f"|format(gc_full * 100) }}% (UTRs + poly-A lower this — expected) |
 | MHC class | I (CD8⁺ CTL response) |
 | Linker | {% if linker_count > 0 %}AAY ×{{ linker_count }} (CTL epitope junction){% else %}— (single-epitope construct){% endif %} |
@@ -106,13 +106,15 @@ This document specifies the synthesis of a personalized multi-epitope mRNA vacci
 
 ```
 5'UTR ({{ five_utr_len }} nt)
-  → Kozak + ATG ({{ kozak_seq | length }} nt)
-  → CDS ({{ cds_len }} nt — encodes {{ peptides | join('–AAY–') }})
+  → Kozak ({{ kozak_seq[:-3] | length }} nt)
+  → CDS ({{ cds_len }} nt, includes initiation ATG and stop — epitopes: {{ peptides | join('–AAY–') }})
   → 3'UTR ({{ three_utr_len }} nt)
   → poly-A ({{ polya_len }} nt)
 ```
 
 **Total construct: {{ total_len }} nt.**
+
+The CDS uses synonymous GC adjustment toward 40–60%; the full RNA includes UTRs and the encoded 100 nt poly-A tail and may have lower GC. The single-copy HBB 3'UTR is NM_000518.5 positions 495–628 (134 nt). The canine codon table is currently used for all species. Any CD4 helper is experimental; prediction does not demonstrate processing or immune activation.
 
 ## 11. Dosing Guidance
 
